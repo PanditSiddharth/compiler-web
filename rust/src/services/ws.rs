@@ -3,9 +3,11 @@ use tokio::{
     process::Command,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
 };
-use std::process::Stdio;
+use std::{process::Stdio};
 use futures_util::{SinkExt, stream::{SplitSink, SplitStream, StreamExt}};
 use tokio::io::AsyncReadExt;
+use wait_timeout::ChildExt;
+use tokio::time::{timeout, Duration};
 
 pub async fn ws_handler(ws: WebSocketUpgrade) -> impl axum::response::IntoResponse {
 
@@ -27,16 +29,35 @@ async fn handle_socket(socket: WebSocket) {
         _ => return,
     };
 
-    // 2️⃣ Python process start
-    let mut child = Command::new("python3")
-        .arg("-u") // unbuffered
-        .arg("-c")
-        .arg(code.as_str())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+let mut child = Command::new("docker")
+    .arg("run")
+    .arg("--rm")                 // auto delete container
+    .arg("-i")                   // stdin
+    .arg("--memory=256m")        // RAM limit
+    .arg("--cpus=0.5")           // CPU limit
+    .arg("python:3.9-slim")   // lightweight image
+    .arg("python3")
+    .arg("-u")
+    .arg("-c")
+    .arg(code.as_str())
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .expect("Failed to start docker container");
 
+// ⏱️ max execution time
+let time_limit = Duration::from_secs(60);
+
+match timeout(time_limit, child.wait()).await {
+    Ok(status) => {
+        println!("✅ Program exited: {:?}", status);
+    }
+    Err(_) => {
+        println!("⏱️ Time limit exceeded");
+        let _ = child.kill().await;
+    }
+}
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     // let mut stdout_reader = BufReader::new(stdout).lines();
