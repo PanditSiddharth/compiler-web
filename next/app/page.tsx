@@ -24,7 +24,13 @@ print("Hello", name)`
     setTerminal([]);
     setRunning(true);
 
-    const ws = new WebSocket("ws://127.0.0.1:4000/ws");
+const WS_URL =
+  process.env.NODE_ENV === "development"
+    ? "ws://127.0.0.1:4000/ws"
+    : "wss://api.compiler.studic.in/ws";
+
+const ws = new WebSocket(WS_URL);
+
 
     ws.onopen = () => {
       log("▶ Running...");

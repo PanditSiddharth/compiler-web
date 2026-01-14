@@ -6,7 +6,6 @@ use tokio::{
 use std::{process::Stdio};
 use futures_util::{SinkExt, stream::{SplitSink, SplitStream, StreamExt}};
 use tokio::io::AsyncReadExt;
-use wait_timeout::ChildExt;
 use tokio::time::{timeout, Duration};
 
 pub async fn ws_handler(ws: WebSocketUpgrade) -> impl axum::response::IntoResponse {
@@ -46,18 +45,7 @@ let mut child = Command::new("docker")
     .spawn()
     .expect("Failed to start docker container");
 
-// ⏱️ max execution time
-let time_limit = Duration::from_secs(60);
 
-match timeout(time_limit, child.wait()).await {
-    Ok(status) => {
-        println!("✅ Program exited: {:?}", status);
-    }
-    Err(_) => {
-        println!("⏱️ Time limit exceeded");
-        let _ = child.kill().await;
-    }
-}
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     // let mut stdout_reader = BufReader::new(stdout).lines();
@@ -83,8 +71,17 @@ tokio::spawn(async move {
         }
     }
 
-    let _ = child.wait().await;
+// ⏱️ max execution time
+let time_limit = Duration::from_secs(60);
 
-
+match timeout(time_limit, child.wait()).await {
+    Ok(status) => {
+        println!("✅ Program exited: {:?}", status);
+    }
+    Err(_) => {
+        println!("⏱️ Time limit exceeded");
+        let _ = child.kill().await;
+    }
+}
     
 }
