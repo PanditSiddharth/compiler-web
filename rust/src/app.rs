@@ -1,10 +1,15 @@
+
 use axum::{Router, routing::get};
 
-use crate::routes::{compile::compile_routes, health, home::home};
-
-pub fn create_app() -> Router {
+use crate::run::ws_handler;
+pub fn compiler_routes() -> Router{
     Router::new()
-        .merge(compile_routes())
-        .route("/", get(home))
-        .route("/health", axum::routing::get(health::health))
+    .route("/ws/{lang}", get(ws_handler))
+}
+
+pub fn other_routes() -> Router {
+    Router::new()
+        // .route("/", get(ws_handler))
+        // .route("/health", axum::routing::get(health::health))
+        
 }
