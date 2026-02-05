@@ -1,0 +1,9 @@
+.monaco-editor,
+.monaco-editor * {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+.monaco-editor {
+  touch-action: manipulation;
+}

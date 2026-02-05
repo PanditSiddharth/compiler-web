@@ -1,77 +1,27 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import dynamic from "next/dynamic";
-import "xterm/css/xterm.css";
+import { useRef, useState } from "react";
 import { Terminal } from "xterm";
-import { Fullscreen, FullscreenIcon } from "lucide-react";
-
-const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
-  ssr: false,
-});
-const codes = {
-  node: `const readline = require("readline");
-
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-
-rl.question("Name: ", name => {
-  console.log("Hello", name);
-  rl.close();
-});
-`,
-  python: `name = input("Enter name: ")
-print("Hello", name)
-`,
-  bash: 'ls -a'
-}
+import { Fullscreen } from "lucide-react";
+import { codes } from "./codes";
+import { Monaco } from "./manco";
+import { Xterm } from "./xterm";
+import type { editor as MonacoEditorType } from "monaco-editor";
+import { EditorKeys } from "./editor-keys";
 
 export default function CodeRunner() {
-  const termDivRef = useRef<HTMLDivElement>(null);
-  const terminalRef = useRef<any>(null);
-  const fitAddonRef = useRef<any>(null);
+
   const wsRef = useRef<WebSocket | null>(null);
+  const fitAddonRef = useRef<any>(null);
 
   // 🔥 ADD THIS
   const runIdRef = useRef(0);
-
+const editorRef = useRef<MonacoEditorType.IStandaloneCodeEditor | null>(null);
   const [lang, setLang] = useState<keyof typeof codes>("python");
-  const [code, setCode] = useState(codes["python"]);
+  const [code, setCode] = useState<string>(codes[lang]);
   const [running, setRunning] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
-
-  /* ---------- TERMINAL INIT (ONCE) ---------- */
-  useEffect(() => {
-    (async () => {
-      const { Terminal } = await import("xterm");
-      const { FitAddon } = await import("xterm-addon-fit");
-
-      const term = new Terminal({
-        cursorBlink: true,
-        fontSize: 14,
-        theme: {
-          background: "#000000",
-          foreground: "#e5e7eb",
-        }
-      });
-
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-
-      if (!termDivRef.current) return;
-      term.open(termDivRef.current);
-      fitAddon.fit();
-
-      terminalRef.current = term;
-      fitAddonRef.current = fitAddon;
-
-      term.onData((d: string) => {
-        wsRef.current?.send(d);
-      });
-    })();
-  }, []);
+  const terminalRef = useRef<any>(null);
 
   /* ---------- RUN ---------- */
   const runCode = () => {
@@ -171,31 +121,12 @@ export default function CodeRunner() {
 
       {/* EDITOR */}
       <div className={`absolute inset-0 pt-12 ${showTerminal ? "opacity-0 pointer-events-none" : ""}`}>
-        <MonacoEditor
-          height="100%"
-          language={lang}
-          theme="vs-dark"
-          value={code}
-          onChange={v => setCode(v || "")}
-          options={{
-            minimap: { enabled: false }, fontSize: 16,
-            // 🔥 LINE NUMBER FIX
-            lineNumbersMinChars: 3,     // default 5 hota hai
-            glyphMargin: false,         // extra left margin hatao
-            folding: false,             // folding arrow margin hatao
-            lineDecorationsWidth: 8,    // default ~10–20 hota hai
-            padding: { top: 4, bottom: 4 },
-          }}
-        />
+        <Monaco lang={lang} code={code} setCode={setCode} editorRef={editorRef}/>
+        <EditorKeys editor={editorRef.current}/>
       </div>
-
+        <Xterm wsRef={wsRef} showTerminal={showTerminal} terminalRef={terminalRef} fitAddonRef={fitAddonRef}/>
       {/* TERMINAL */}
-      <div
-        ref={termDivRef}
-        className={`absolute inset-0 pt-12 bg-gray-700 transition-opacity [&_.xterm-screen]:px-1.5
-    [&_.xterm-screen]:py-1.5
-          ${showTerminal ? "opacity-100" : "opacity-0 pointer-events-none"}`}
-      />
+
     </div>
   );
 }

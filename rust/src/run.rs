@@ -1,151 +1,100 @@
-use std::{ process::Stdio, time::Duration };
 
-use axum::{
-    extract::{ Path, WebSocketUpgrade, ws::{ Message, WebSocket } },
-    http::Uri,
-    response::IntoResponse,
-};
-use futures_util::{ SinkExt, StreamExt, stream::{ SplitSink, SplitStream } };
-use tokio::{
-    io::{ AsyncReadExt, AsyncWriteExt },
-    process::{ ChildStderr, ChildStdout, Command },
-    sync::mpsc::{ self, UnboundedSender },
-    time::sleep,
+use tokio::{sync::mpsc::{ UnboundedReceiver, UnboundedSender }, task
 };
 
+use portable_pty::{CommandBuilder, PtyPair, PtySize, native_pty_system};
 use crate::lang::get_lang;
-pub async fn ws_handler(ws: WebSocketUpgrade, Path(lang): Path<String>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket: WebSocket| handle_socket(socket, lang))
+use tokio::sync::oneshot;
+
+pub struct PtyHandle {
+     pub child: Box<dyn portable_pty::Child + Send>,
+    pub pair: PtyPair,
 }
 
-async fn handle_socket(mut socket: WebSocket, lang: String) {
-    let text = socket.recv().await.unwrap().unwrap();
-    println!("Lang {}", lang);
-    let ntext = text.to_text().unwrap();
+pub async fn pty_run_command(
+    lang: String,
+    ntext: String,
+) -> anyhow::Result<PtyHandle> {
+
     let (image, args) = get_lang(&lang, ntext.to_owned());
 
-    let mut result_child = Command::new("docker")
-        .arg("run")
-        .arg("--rm") // auto delete container
-        .arg("-i") // stdin
-        .arg("--memory=256m") // RAM limit
-        .arg("--cpus=0.5") // CPU limit
-        .arg(image) // lightweight image
-        .args(args)
-        .stdout(Stdio::piped())
-        .stdin(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let (tx, rx) = oneshot::channel::<PtyHandle>();
 
-    let mut stdout: ChildStdout = result_child.stdout.take().unwrap();
-    let mut stderr: ChildStderr = result_child.stderr.take().unwrap();
-    let mut stdin = result_child.stdin.take().unwrap();
+    task::spawn_blocking(move || {
+        let pty_system = native_pty_system();
 
-    let (mut sender, mut receiver): (
-        SplitSink<WebSocket, Message>,
-        SplitStream<WebSocket>,
-    ) = socket.split();
+        let pair = pty_system.openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        }).unwrap();
 
-    let stdin_task = tokio::spawn(async move {
-        while let Some(Ok(msg)) = receiver.next().await {
-            match msg {
-                Message::Text(text) => {
-                    println!("WS INPUT >>> {:?}", text.to_string());
-                    if
-                        let Err(e) = stdin.write_all(
-                            format!("{}\n", text.to_string()).as_bytes()
-                        ).await
-                    {
-                        // stdin closed → process ended
-                        println!("stdin closed: {}", e);
-                        break;
-                    }
+let mut cmd = CommandBuilder::new("docker"); 
+cmd.arg("run"); 
+cmd.arg("--rm"); // auto delete container 
+cmd.arg("--network");
+cmd.arg("none");
+cmd.arg("-it"); // stdin 
+cmd.arg("--init");  
+cmd.arg("--memory=256m"); // RAM limit 
+cmd.arg("--cpus=0.5"); // CPU limit 
+cmd.arg(image);
+cmd.args(args);
 
-                    if let Err(_) = stdin.flush().await {
-                        break;
-                    }
-                }
-                Message::Ping(p) => println!("{:?}", p),
-                _ => println!("Nothing"),
-            }
-        }
+
+        let child = pair.slave.spawn_command(cmd).unwrap();
+
+        let handle = PtyHandle {
+            child,
+            pair,
+        };
+
+        let _ = tx.send(handle);
     });
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    // 🔥 async side waits here
+    let handle = rx.await?;
 
-    let tx_out: UnboundedSender<String> = tx.clone();
-    let stdout_task = tokio::spawn(async move {
-        let mut buffer = Vec::with_capacity(256);
-
-        loop {
-            buffer.clear();
-            let n = stdout.read_buf(&mut buffer).await.unwrap();
-            if n == 0 {
-                break;
-            }
-
-            let out: String = String::from_utf8_lossy(&buffer[..n]).to_string();
-            tx_out.send(out).unwrap();
-        }
-
-        // stdin_task.abort();
-        // 🔴 IMPORTANT: close websocket
-        // let _ = sender.send(Message::Close(None)).await;
-    });
-
-    let tx_err = tx.clone();
-    let stderr_task = tokio::spawn(async move {
-        let mut buffer = Vec::with_capacity(256);
-
-        loop {
-            buffer.clear();
-            let n = stderr.read_buf(&mut buffer).await.unwrap();
-            if n == 0 {
-                break;
-            }
-
-            let err = String::from_utf8_lossy(&buffer[..n]).to_string();
-
-            // 🔴 tag error
-            tx_err.send(format!("[stderr] {}", err)).unwrap();
-        }
-    });
-
-    let ws_sender_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if sender.send(Message::Text(msg.into())).await.is_err() {
-                break;
-            }
-        }
-
-        print!("Program close");
-        let _ = sender.send(Message::Close(None)).await;
-    });
-
-    let timeout = sleep(Duration::from_secs(60));
-    tokio::pin!(timeout);
-    tokio::select! {
-    _ = ws_sender_task => {
-        stdin_task.abort();
-        let _ = result_child.kill().await; // 🔥 kill docker
-    },
-    _ = stdout_task => { stdin_task.abort();
-        let _ = result_child.kill().await; // 🔥 kill docker
-    },
-    _= stderr_task => { stdin_task.abort();
-        let _ = result_child.kill().await; // 🔥 kill docker
-    
-    },
-// _= stdin_task => {
-        // let _ = result_child.kill().await; // 🔥 kill docker
-// },
-        _ = &mut timeout => {
-        // ⏱️ TIMEOUT HIT
-        println!("⏱️ Execution timeout");
-
-        stdin_task.abort();
-        let _ = result_child.kill().await; // 🔥 kill docker
-    }
+    Ok(handle)
 }
+
+
+pub async fn pty_run(
+    pair: PtyPair,
+    out_tx: UnboundedSender<Vec<u8>>,
+    mut in_rx: UnboundedReceiver<Vec<u8>>,
+) {
+    task::spawn_blocking(move || {
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut writer = pair.master.take_writer().unwrap();
+
+        // 🔹 stdout thread
+        let tx = out_tx.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 1024];
+            loop {
+                
+                match reader.read(&mut buf) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        let _ = tx.send(buf[..n].to_vec());
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        // 🔹 stdin thread
+        let _stdin_thread = std::thread::spawn(move || {
+            while let Some(data) = in_rx.blocking_recv() {
+                if writer.write_all(&data).is_err() {
+                    break;
+                }
+                let _ = writer.flush();
+            }
+            // 🔥 stdin CLOSED → Node ko EOF
+            drop(writer);
+        });
+    });
 }

@@ -1,6 +1,8 @@
+use std::env;
+
 use axum::{Router};
 use tokio::net::TcpListener;
-mod run;
+mod ws; mod run;
 mod app;
 mod lang;
 use crate::app::{compiler_routes, other_routes};
@@ -10,7 +12,8 @@ async fn main() {
     let new_app = Router::new()
     .merge(compiler_routes())
     .merge(other_routes());
-    let listener = TcpListener::bind("127.0.0.1:4000")
+    let host = format!("0.0.0.0:{}", env::var("PORT").unwrap_or("4000".into()));
+    let listener = TcpListener::bind(host)
         .await
         .unwrap();
     axum::serve(listener, new_app).await.unwrap();

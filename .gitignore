@@ -4,3 +4,6 @@ rust/Cargo.lock
 next/.next/
 next/node_modules/
 next/.env
+app.js
+Dockerfile
+test/

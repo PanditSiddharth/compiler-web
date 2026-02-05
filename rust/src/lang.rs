@@ -56,7 +56,7 @@ pub fn get_lang(lang: &str, ntext: String) -> (&'static str, Vec<String>) {
             let escaped = escape_quotes(&ntext);
 
             (
-                "openjdk:25-slim",
+                "eclipse-temurin:21-jdk-jammy",
                 vec![
                     "sh".into(),
                     "-c".into(),
@@ -67,7 +67,7 @@ pub fn get_lang(lang: &str, ntext: String) -> (&'static str, Vec<String>) {
                     ),
                 ],
             )
-        }
+        },
 
         // 🦀 Rust
         "rs" | "rust" => {
@@ -84,7 +84,72 @@ pub fn get_lang(lang: &str, ntext: String) -> (&'static str, Vec<String>) {
                     ),
                 ],
             )
-        }
+        },
+        // 🇨 C
+        "cc" | "c" => {
+            let escaped = escape_quotes(&ntext);
+            
+            (
+            "gcc:14.3.0-trixie",
+            vec![
+                "bash".into(),
+                "-c".into(),
+                format!(
+                    "echo \"{}\" > main.c && gcc main.c -o main && stdbuf -o0 ./main",
+                    escaped
+                ),
+            ],
+        )},
+
+        // 🇨➕➕ C++
+        "cpp" | "cxx" => {
+            let escaped = escape_quotes(&ntext);
+            
+            (
+            "gcc:14.3.0-trixie",
+            vec![
+                "bash".into(),
+                "-c".into(),
+                format!(
+                    "echo \"{}\" > main.cpp && g++ main.cpp -o main && stdbuf -o0 ./main",
+                    escaped
+                ),
+            ],
+        )},
+
+"go" => {
+    (
+        "golang:1.24.12-bookworm",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+r#"cat << 'EOF' > main.go
+{}
+EOF
+go run main.go"#,
+                ntext
+            ),
+        ],
+    )
+},
+
+        // 🟦 TypeScript
+        "ts" | "typescript" => {
+            let escaped = escape_quotes(&ntext);
+            
+            (
+            "mcr.microsoft.com/devcontainers/typescript-node:22",
+            vec![
+                "bash".into(),
+                "-c".into(),
+                format!(
+                    "echo \"{}\" > main.ts && tsc main.ts && node main.js",
+                    escaped
+                ),
+            ],
+            )},
+             
 
         _ => panic!("Unsupported language: {}", lang),
     }
